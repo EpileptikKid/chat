@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Чат унікальних слів</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    background: #eef1f6;
+    color: #1c2333;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+  }
+  .app {
+    width: 100%;
+    max-width: 640px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #ffffff;
+    box-shadow: 0 0 24px rgba(0,0,0,0.08);
+  }
+  header {
+    padding: 16px 20px;
+    background: #2f6fed;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  header h1 {
+    margin: 0 0 8px;
+    font-size: 18px;
+  }
+  .counter {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255,255,255,0.18);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 14px;
+  }
+  .counter b { font-size: 16px; }
+  .chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .empty {
+    margin: auto;
+    color: #98a2b3;
+    text-align: center;
+    font-size: 14px;
+  }
+  .msg {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    background: #f1f4f9;
+    align-self: flex-start;
+    word-wrap: break-word;
+  }
+  .msg .sender {
+    font-size: 12px;
+    font-weight: 700;
+    color: #2f6fed;
+    margin-bottom: 4px;
+  }
+  .msg .text { font-size: 15px; line-height: 1.4; }
+  form {
+    flex-shrink: 0;
+    border-top: 1px solid #e4e8ef;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #fafbfd;
+  }
+  .row { display: flex; gap: 8px; }
+  input, textarea {
+    font-family: inherit;
+    font-size: 15px;
+    border: 1px solid #d0d7e2;
+    border-radius: 10px;
+    padding: 10px 12px;
+    outline: none;
+    resize: none;
+  }
+  input:focus, textarea:focus { border-color: #2f6fed; }
+  #sender { flex: 1; }
+  #text { flex: 1; min-height: 44px; }
+  button {
+    background: #2f6fed;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 0 20px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: #245bd0; }
+  .error {
+    color: #d92d20;
+    font-size: 13px;
+    min-height: 18px;
+  }
+  .clear-btn {
+    background: transparent;
+    color: rgba(255,255,255,0.85);
+    border: 1px solid rgba(255,255,255,0.4);
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 16px;
+    float: right;
+    margin-top: -34px;
+  }
+  .clear-btn:hover { background: rgba(255,255,255,0.15); }
+
+  /* Модальне вікно підтвердження */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15,23,42,0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 100;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: #fff;
+    border-radius: 14px;
+    padding: 22px;
+    max-width: 360px;
+    width: 100%;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+    text-align: center;
+  }
+  .modal h2 { margin: 0 0 8px; font-size: 18px; }
+  .modal p { margin: 0 0 20px; color: #475467; font-size: 14px; }
+  .modal .actions { display: flex; gap: 10px; }
+  .modal .actions button { flex: 1; padding: 10px 0; }
+  .btn-cancel { background: #eef1f6; color: #1c2333; }
+  .btn-cancel:hover { background: #e2e7f0; }
+  .btn-danger { background: #d92d20; }
+  .btn-danger:hover { background: #b42318; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Чат унікальних слів</h1>
+      <span class="counter">Унікальних слів: <b id="wordCount">0</b></span>
+      <button type="button" class="clear-btn" id="clearBtn">Очистити</button>
+    </header>
+
+    <div class="chat" id="chat">
+      <div class="empty" id="emptyState">Повідомлень ще немає. Напишіть перше.</div>
+    </div>
+
+    <form id="form">
+      <div class="error" id="error"></div>
+      <div class="row">
+        <input id="sender" type="text" placeholder="Ваше імʼя" autocomplete="off">
+      </div>
+      <div class="row">
+        <textarea id="text" placeholder="Введіть повідомлення (тільки українські слова)"></textarea>
+        <button type="submit">Надіслати</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <h2>Обнулити чат?</h2>
+      <p>Ви впевнені? Уся історія повідомлень і список унікальних слів будуть видалені без можливості відновлення.</p>
+      <div class="actions">
+        <button type="button" class="btn-cancel" id="modalCancel">Скасувати</button>
+        <button type="button" class="btn-danger" id="modalConfirm">Так, обнулити</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  var STORAGE_KEY = "uniqueWordsChat";
+  var chatEl = document.getElementById("chat");
+  var emptyState = document.getElementById("emptyState");
+  var form = document.getElementById("form");
+  var senderInput = document.getElementById("sender");
+  var textInput = document.getElementById("text");
+  var errorEl = document.getElementById("error");
+  var wordCountEl = document.getElementById("wordCount");
+  var clearBtn = document.getElementById("clearBtn");
+  var modalOverlay = document.getElementById("modalOverlay");
+  var modalCancel = document.getElementById("modalCancel");
+  var modalConfirm = document.getElementById("modalConfirm");
+
+  // Дозволені розділові знаки: крапка, кома, тире, двокрапка.
+  // Заборонено: англійські букви (a-z), цифри (0-9) та інші розділові знаки.
+  var FORBIDDEN_CHAR = /[a-z0-9]/i;
+  var ALLOWED_PUNCT = ".,\u2013\u2014-:"; // . , – — - :
+
+  var messages = load();
+  var usedWords = new Set();
+
+  // Перебудова множини використаних слів з історії.
+  messages.forEach(function (m) {
+    extractWords(m.text).forEach(function (w) { usedWords.add(w); });
+  });
+
+  render();
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    clearError();
+
+    var sender = senderInput.value.trim();
+    var text = textInput.value.trim();
+
+    if (!sender) { return showError("Вкажіть імʼя відправника."); }
+    if (!text) { return showError("Повідомлення порожнє."); }
+
+    // 1. Перевірка заборонених символів (англійські букви / цифри).
+    if (FORBIDDEN_CHAR.test(text)) {
+      return showError("Заборонено використовувати англійські букви та цифри.");
+    }
+
+    // 2. Перевірка заборонених розділових знаків.
+    var badPunct = findForbiddenPunctuation(text);
+    if (badPunct) {
+      return showError("Заборонений символ: «" + badPunct + "». Дозволені лише . , - :");
+    }
+
+    // 3. Витягуємо слова та перевіряємо унікальність.
+    var words = extractWords(text);
+    if (words.length === 0) {
+      return showError("Повідомлення має містити хоча б одне слово.");
+    }
+
+    // Дублікати всередині самого повідомлення теж заборонені.
+    var seenInMsg = new Set();
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i];
+      if (usedWords.has(w) || seenInMsg.has(w)) {
+        return showError("Слово «" + w + "» вже було використане в чаті.");
+      }
+      seenInMsg.add(w);
+    }
+
+    // Все добре — зберігаємо повідомлення.
+    words.forEach(function (w) { usedWords.add(w); });
+    var msg = { sender: sender, text: text, ts: Date.now() };
+    messages.push(msg);
+    save();
+    render();
+
+    textInput.value = "";
+    textInput.focus();
+  });
+
+  // Відкриваємо вікно підтвердження обнулення.
+  clearBtn.addEventListener("click", function () {
+    modalOverlay.classList.add("show");
+  });
+
+  // Скасування — просто закриваємо вікно.
+  modalCancel.addEventListener("click", closeModal);
+
+  // Закриття по кліку на затемнену область.
+  modalOverlay.addEventListener("click", function (e) {
+    if (e.target === modalOverlay) { closeModal(); }
+  });
+
+  // Закриття по Escape.
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { closeModal(); }
+  });
+
+  // Підтвердження — обнуляємо чат.
+  modalConfirm.addEventListener("click", function () {
+    messages = [];
+    usedWords = new Set();
+    save();
+    render();
+    clearError();
+    closeModal();
+  });
+
+  function closeModal() {
+    modalOverlay.classList.remove("show");
+  }
+
+  // --- Допоміжні функції ---
+
+  // Розбиває текст на слова без урахування регістру та розділових знаків.
+  function extractWords(text) {
+    var lowered = text.toLowerCase();
+    // Замінюємо все, що не буква (українська/будь-яка), на пробіл.
+    var cleaned = lowered.replace(/[^\p{L}]+/gu, " ");
+    var parts = cleaned.split(/\s+/);
+    var result = [];
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i]) { result.push(parts[i]); }
+    }
+    return result;
+  }
+
+  // Повертає перший заборонений розділовий знак або null.
+  function findForbiddenPunctuation(text) {
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      // Пропускаємо букви, пробіли та переноси рядків.
+      if (/\p{L}/u.test(ch) || /\s/.test(ch)) { continue; }
+      // Пропускаємо дозволені розділові знаки.
+      if (ALLOWED_PUNCT.indexOf(ch) !== -1) { continue; }
+      return ch;
+    }
+    return null;
+  }
+
+  function render() {
+    // Очищаємо чат.
+    chatEl.innerHTML = "";
+
+    if (messages.length === 0) {
+      chatEl.appendChild(emptyState);
+    } else {
+      messages.forEach(function (m) {
+        var wrap = document.createElement("div");
+        wrap.className = "msg";
+
+        var s = document.createElement("div");
+        s.className = "sender";
+        s.textContent = m.sender;
+
+        var t = document.createElement("div");
+        t.className = "text";
+        t.textContent = m.text;
+
+        wrap.appendChild(s);
+        wrap.appendChild(t);
+        chatEl.appendChild(wrap);
+      });
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    wordCountEl.textContent = usedWords.size;
+  }
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+  }
+
+  function clearError() {
+    errorEl.textContent = "";
+  }
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+    } catch (e) { /* ignore */ }
+  }
+})();
+</script>
+</body>
+</html>
