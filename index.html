@@ -44,6 +44,11 @@
     font-size: 14px;
   }
   .counter b { font-size: 16px; }
+  .status {
+    font-size: 12px;
+    margin-left: 10px;
+    opacity: 0.85;
+  }
   .chat {
     flex: 1;
     overflow-y: auto;
@@ -106,6 +111,7 @@
     cursor: pointer;
   }
   button:hover { background: #245bd0; }
+  button:disabled { background: #9db8ef; cursor: not-allowed; }
   .error {
     color: #d92d20;
     font-size: 13px;
@@ -159,6 +165,7 @@
     <header>
       <h1>Чат унікальних слів</h1>
       <span class="counter">Унікальних слів: <b id="wordCount">0</b></span>
+      <span class="status" id="status">зʼєднання…</span>
       <button type="button" class="clear-btn" id="clearBtn">Очистити</button>
     </header>
 
@@ -173,7 +180,7 @@
       </div>
       <div class="row">
         <textarea id="text" placeholder="Введіть повідомлення (тільки українські слова)"></textarea>
-        <button type="submit">Надіслати</button>
+        <button type="submit" id="sendBtn" disabled>Надіслати</button>
       </div>
     </form>
   </div>
@@ -181,7 +188,7 @@
   <div class="modal-overlay" id="modalOverlay">
     <div class="modal">
       <h2>Обнулити чат?</h2>
-      <p>Ви впевнені? Уся історія повідомлень і список унікальних слів будуть видалені без можливості відновлення.</p>
+      <p>Ви впевнені? Уся історія повідомлень і список унікальних слів будуть видалені для всіх користувачів без можливості відновлення.</p>
       <div class="actions">
         <button type="button" class="btn-cancel" id="modalCancel">Скасувати</button>
         <button type="button" class="btn-danger" id="modalConfirm">Так, обнулити</button>
@@ -189,111 +196,138 @@
     </div>
   </div>
 
-<script>
-(function () {
-  "use strict";
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getDatabase, ref, push, onValue, remove
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-  var STORAGE_KEY = "uniqueWordsChat";
-  var chatEl = document.getElementById("chat");
-  var emptyState = document.getElementById("emptyState");
-  var form = document.getElementById("form");
-  var senderInput = document.getElementById("sender");
-  var textInput = document.getElementById("text");
-  var errorEl = document.getElementById("error");
-  var wordCountEl = document.getElementById("wordCount");
-  var clearBtn = document.getElementById("clearBtn");
-  var modalOverlay = document.getElementById("modalOverlay");
-  var modalCancel = document.getElementById("modalCancel");
-  var modalConfirm = document.getElementById("modalConfirm");
+  // --- Конфігурація Firebase ---
+  // databaseURL відповідає вашій базі в регіоні europe-west1.
+  const firebaseConfig = {
+    apiKey: "AIzaSyANV-CJaENzFF0fTxjtvL9XmBW6OtyoGVU",
+    authDomain: "chat-4decc.firebaseapp.com",
+    databaseURL: "https://chat-4decc-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "chat-4decc",
+    storageBucket: "chat-4decc.firebasestorage.app",
+    messagingSenderId: "484099038630",
+    appId: "1:484099038630:web:fcbe708d81bf52fb04c367"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const messagesRef = ref(db, "messages");
+
+  // --- Елементи DOM ---
+  const chatEl = document.getElementById("chat");
+  const emptyState = document.getElementById("emptyState");
+  const form = document.getElementById("form");
+  const senderInput = document.getElementById("sender");
+  const textInput = document.getElementById("text");
+  const errorEl = document.getElementById("error");
+  const wordCountEl = document.getElementById("wordCount");
+  const clearBtn = document.getElementById("clearBtn");
+  const sendBtn = document.getElementById("sendBtn");
+  const statusEl = document.getElementById("status");
+  const modalOverlay = document.getElementById("modalOverlay");
+  const modalCancel = document.getElementById("modalCancel");
+  const modalConfirm = document.getElementById("modalConfirm");
 
   // Дозволені розділові знаки: крапка, кома, тире, двокрапка.
-  // Заборонено: англійські букви (a-z), цифри (0-9) та інші розділові знаки.
-  var FORBIDDEN_CHAR = /[a-z0-9]/i;
-  var ALLOWED_PUNCT = ".,\u2013\u2014-:"; // . , – — - :
+  const FORBIDDEN_CHAR = /[a-z0-9]/i;                 // англійські букви та цифри
+  const ALLOWED_PUNCT = ".,\u2013\u2014-:";           // . , – — - :
 
-  var messages = load();
-  var usedWords = new Set();
+  // Локальний кеш спільного стану, який приходить з Firebase.
+  let messages = [];             // [{ sender, text, ts }]
+  let usedWords = new Set();     // усі унікальні слова з усіх повідомлень
 
-  // Перебудова множини використаних слів з історії.
-  messages.forEach(function (m) {
-    extractWords(m.text).forEach(function (w) { usedWords.add(w); });
+  // --- Підписка на спільну історію в реальному часі ---
+  // onValue спрацьовує щоразу, коли дані у Firebase змінюються (на будь-якому пристрої).
+  onValue(messagesRef, (snapshot) => {
+    const data = snapshot.val() || {};
+    messages = Object.keys(data)
+      .map((key) => ({ key, ...data[key] }))
+      .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+    // Перебудовуємо множину використаних слів зі спільної історії.
+    usedWords = new Set();
+    messages.forEach((m) => {
+      extractWords(m.text).forEach((w) => usedWords.add(w));
+    });
+
+    render();
+    setStatus("онлайн", false);
+    sendBtn.disabled = false;
+  }, (err) => {
+    setStatus("помилка зʼєднання", true);
+    showError("Не вдалося підключитися до бази: " + err.message);
   });
 
-  render();
-
-  form.addEventListener("submit", function (e) {
+  // --- Відправка повідомлення ---
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearError();
 
-    var sender = senderInput.value.trim();
-    var text = textInput.value.trim();
+    const sender = senderInput.value.trim();
+    const text = textInput.value.trim();
 
     if (!sender) { return showError("Вкажіть імʼя відправника."); }
     if (!text) { return showError("Повідомлення порожнє."); }
 
-    // 1. Перевірка заборонених символів (англійські букви / цифри).
+    // 1. Заборонені символи: англійські букви / цифри.
     if (FORBIDDEN_CHAR.test(text)) {
       return showError("Заборонено використовувати англійські букви та цифри.");
     }
 
-    // 2. Перевірка заборонених розділових знаків.
-    var badPunct = findForbiddenPunctuation(text);
+    // 2. Заборонені розділові знаки (дозволені лише . , - :).
+    const badPunct = findForbiddenPunctuation(text);
     if (badPunct) {
       return showError("Заборонений символ: «" + badPunct + "». Дозволені лише . , - :");
     }
 
-    // 3. Витягуємо слова та перевіряємо унікальність.
-    var words = extractWords(text);
+    // 3. Унікальність слів проти спільної історії.
+    const words = extractWords(text);
     if (words.length === 0) {
       return showError("Повідомлення має містити хоча б одне слово.");
     }
 
-    // Дублікати всередині самого повідомлення теж заборонені.
-    var seenInMsg = new Set();
-    for (var i = 0; i < words.length; i++) {
-      var w = words[i];
+    const seenInMsg = new Set();
+    for (const w of words) {
       if (usedWords.has(w) || seenInMsg.has(w)) {
         return showError("Слово «" + w + "» вже було використане в чаті.");
       }
       seenInMsg.add(w);
     }
 
-    // Все добре — зберігаємо повідомлення.
-    words.forEach(function (w) { usedWords.add(w); });
-    var msg = { sender: sender, text: text, ts: Date.now() };
-    messages.push(msg);
-    save();
-    render();
-
-    textInput.value = "";
-    textInput.focus();
+    // Записуємо у спільну базу. onValue сам оновить UI на всіх пристроях.
+    sendBtn.disabled = true;
+    try {
+      await push(messagesRef, { sender, text, ts: Date.now() });
+      textInput.value = "";
+      textInput.focus();
+    } catch (err) {
+      showError("Не вдалося надіслати: " + err.message);
+    } finally {
+      sendBtn.disabled = false;
+    }
   });
 
-  // Відкриваємо вікно підтвердження обнулення.
-  clearBtn.addEventListener("click", function () {
-    modalOverlay.classList.add("show");
-  });
-
-  // Скасування — просто закриваємо вікно.
+  // --- Обнулення спільного чату ---
+  clearBtn.addEventListener("click", () => modalOverlay.classList.add("show"));
   modalCancel.addEventListener("click", closeModal);
-
-  // Закриття по кліку на затемнену область.
-  modalOverlay.addEventListener("click", function (e) {
+  modalOverlay.addEventListener("click", (e) => {
     if (e.target === modalOverlay) { closeModal(); }
   });
-
-  // Закриття по Escape.
-  document.addEventListener("keydown", function (e) {
+  document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { closeModal(); }
   });
-
-  // Підтвердження — обнуляємо чат.
-  modalConfirm.addEventListener("click", function () {
-    messages = [];
-    usedWords = new Set();
-    save();
-    render();
-    clearError();
+  modalConfirm.addEventListener("click", async () => {
+    try {
+      await remove(messagesRef);   // видаляє всю історію у спільній базі
+      clearError();
+    } catch (err) {
+      showError("Не вдалося обнулити: " + err.message);
+    }
     closeModal();
   });
 
@@ -305,24 +339,14 @@
 
   // Розбиває текст на слова без урахування регістру та розділових знаків.
   function extractWords(text) {
-    var lowered = text.toLowerCase();
-    // Замінюємо все, що не буква (українська/будь-яка), на пробіл.
-    var cleaned = lowered.replace(/[^\p{L}]+/gu, " ");
-    var parts = cleaned.split(/\s+/);
-    var result = [];
-    for (var i = 0; i < parts.length; i++) {
-      if (parts[i]) { result.push(parts[i]); }
-    }
-    return result;
+    const cleaned = text.toLowerCase().replace(/[^\p{L}]+/gu, " ");
+    return cleaned.split(/\s+/).filter(Boolean);
   }
 
   // Повертає перший заборонений розділовий знак або null.
   function findForbiddenPunctuation(text) {
-    for (var i = 0; i < text.length; i++) {
-      var ch = text[i];
-      // Пропускаємо букви, пробіли та переноси рядків.
+    for (const ch of text) {
       if (/\p{L}/u.test(ch) || /\s/.test(ch)) { continue; }
-      // Пропускаємо дозволені розділові знаки.
       if (ALLOWED_PUNCT.indexOf(ch) !== -1) { continue; }
       return ch;
     }
@@ -330,21 +354,19 @@
   }
 
   function render() {
-    // Очищаємо чат.
     chatEl.innerHTML = "";
-
     if (messages.length === 0) {
       chatEl.appendChild(emptyState);
     } else {
-      messages.forEach(function (m) {
-        var wrap = document.createElement("div");
+      messages.forEach((m) => {
+        const wrap = document.createElement("div");
         wrap.className = "msg";
 
-        var s = document.createElement("div");
+        const s = document.createElement("div");
         s.className = "sender";
         s.textContent = m.sender;
 
-        var t = document.createElement("div");
+        const t = document.createElement("div");
         t.className = "text";
         t.textContent = m.text;
 
@@ -354,33 +376,15 @@
       });
       chatEl.scrollTop = chatEl.scrollHeight;
     }
-
     wordCountEl.textContent = usedWords.size;
   }
 
-  function showError(msg) {
-    errorEl.textContent = msg;
+  function showError(msg) { errorEl.textContent = msg; }
+  function clearError() { errorEl.textContent = ""; }
+  function setStatus(text, isError) {
+    statusEl.textContent = text;
+    statusEl.style.color = isError ? "#ffd6d6" : "";
   }
-
-  function clearError() {
-    errorEl.textContent = "";
-  }
-
-  function load() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  function save() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    } catch (e) { /* ignore */ }
-  }
-})();
 </script>
 </body>
 </html>
